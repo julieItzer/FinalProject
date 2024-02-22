@@ -2,11 +2,9 @@ import itertools
 import random
 import matplotlib.pyplot as plt
 
- 
 def is_collinear(p1, p2, p3):
-    # חישוב המכפלה הצלבית
+    # חישוב המכפלה סקלרית
     return (p1[0] - p2[0]) * (p3[1] - p2[1]) == (p3[0] - p2[0]) * (p1[1] - p2[1])
-
 
 def generate_unique_points(n, max_points):
     chosen_points = set()
@@ -16,7 +14,11 @@ def generate_unique_points(n, max_points):
 
     # בחירת נקודה באקראיות ובדיקה שהיא לא יוצרת קולינריות עם נקודות קיימות
     while len(chosen_points) < max_points and remaining_points:
-        new_point = remaining_points.pop(random.randrange(len(remaining_points)))
+        k = random.randint(0, len(remaining_points)-1)
+        new_point = remaining_points[k]
+        remaining_points[k] = remaining_points[-1]
+        remaining_points.pop()
+        #new_point = remaining_points.pop(random.randrange(len(remaining_points)))
         if x_counts[new_point[0]] >= 2 or y_counts[new_point[1]] >= 2:  # כבר יש שתי נקודות בשורה או בעמודה
             continue
         if not any(is_collinear(p1, p2, new_point) for p1, p2 in itertools.combinations(chosen_points, 2)):
@@ -29,13 +31,15 @@ def generate_unique_points(n, max_points):
 
 
 # יצירת הנקודות
-n = 60
+n = 5
 max_points = 2 * n
 unique_points = generate_unique_points(n, max_points)
+
 
 # הצגה גרפית של הנקודות
 x_values = [point[0] for point in unique_points]
 y_values = [point[1] for point in unique_points]
+
 print(unique_points)
 print(len(unique_points))
 print(len(unique_points)/n)
