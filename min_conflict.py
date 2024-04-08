@@ -2,6 +2,7 @@ import itertools
 import random
 import matplotlib.pyplot as plt
 import numpy as np
+from pyparsing import empty
 
 
 def is_collinear(p1, p2, p3):
@@ -35,109 +36,91 @@ def count_collinear_points(matrix, unique_points, n):
     # עבור כל זוג נקודות, בדוק אילו נקודות נוספות יוצרות ישר קולינרי
     for i in range(n):
         for j in range(n):
-            if (i, j) not in unique_points:
-                for p1, p2 in itertools.combinations(unique_points, 2):
-                      if is_collinear(p1, p2, (i, j)):
+            for p1, p2 in itertools.combinations(unique_points, 2):
+                if (p1 == (i,j) or p2 == (i,j)):
+                    continue
+                if (p1[0] == p2[0] and p2[0] == i) or (p1[1] == p2[1] and p2[1] == j):
+                    matrix[i, j] += 1
+                else:
+                    if is_collinear(p1, p2, (i, j)):
                         matrix[i, j] += 1
+    return matrix
+
+def create_matrix_from_points(points):
+    # יצירת מטריצה של אפסים עם הגודל המבוקש
+    matrix = np.zeros((n, n))
+
+    # עדכון המטריצה: עבור כל נקודה, שים -1 במיקום המתאים
+    for point in points:
+        # x, y = point
+        matrix[point] = -1
+
     return matrix
 
 def find_min_values_positions(matrix, num):
     # יצירת רשימה של כל הנקודות והערכים שלהן, למעט אלו עם ערך 0
-    points_values = [(i, j, matrix[i][j]) for i in range(len(matrix)) for j in range(len(matrix[0])) if matrix[i][j] != 0]
+    points_values = [(i, j, matrix[i][j]) for i in range(len(matrix)) for j in range(len(matrix[0]))
+                     if matrix[i][j] >= 0]
 
     # מיון הרשימה לפי הערך בכל נקודה
     points_values.sort(key=lambda x: x[2])
 
     # מציאת num הערכים המינימליים
     min_positions = [(i, j) for i, j, value in points_values[:num]]
+    #if min_positions[0] != 0:
+        #random.shuffle(min_positions)# מערבב את הרשימה של המינימליים
 
     return min_positions
 
-def min_conflicts(points, n):
-    """
-    def find_collinear_point():
-        # מחפשת נקודה שהיא חלק מקו קולינרי עם שתי נקודות נוספות
-        for point in points:
-            for p1, p2 in itertools.combinations(points, 2):
-                if point != p1 and point != p2 and is_collinear(point, p1, p2):
-                    return point
-        return None
-        """
+# הפונקציה תחזיר נקודה אשר נמצאת בקונפליקט עם הנקודה שהפונקציה מקבלת
+def Finding_the_points_of_conflict(conPoints, points):
+    for p1, p2 in itertools.combinations(points, 2):
+        if is_collinear(p1, p2, conPoints):
+            l = [p1, p2]
+            return random.choice(l)
 
-    max_steps = 100
-    """""
-    for _ in range(max_steps):
-        collinear_point = find_collinear_point()
-        if collinear_point is None:
-            # אם לא נמצאו נקודות קולינריות, הפתרון תקין
-            return points
-            """
-
-
-        #points.remove(collinear_point)
-    new_point = (random.randint(0, n-1), random.randint(0, n-1))
-    while any(is_collinear(new_point, p1, p2) for p1, p2 in itertools.combinations(points, 2)):
-        new_point = (random.randint(0, n-1), random.randint(0, n-1))
-        points.append(new_point)
-
-    # אם הגענו למספר הצעדים המקסימלי ללא פתרון תקין, מחזירים None
-    return None
-
-def can_place_point(p, placed_points, i):
-    # Function to check if a point can be placed without violating the constraint
-    for j in range(len(placed_points)):
-        if i == j:
-            continue
-        if is_collinear(placed_points[i], p,placed_points[j] ):
-                return False
-    return True
-
-def backtrack(points, placed_points, idx):
-    if idx == len(points):
-        return True
-
-    for i in range(len(placed_points)):
-        if can_place_point(points[idx], placed_points, i):
-            placed_points.add(points[idx])
-            if backtrack(points, placed_points, idx + 1):
-                return True
-            placed_points[i].pop()
-    placed_points.add(points[idx])
-    if backtrack(points, placed_points, idx + 1):
-        return True
-    placed_points.pop()
-    return False
-
-
-def fix_points(points):
-    while True:
-        placed_points = set()
-        if backtrack(points, placed_points, 0):
-            return placed_points
-        else:
-            # If backtracking fails, remove a random problematic point and retry
-            problematic_points = [point for point in points if not can_place_point(point, placed_points)]
-            if not problematic_points:
-                return None  # No solution found
-            else:
-                # Remove a random problematic point
-                points.remove(random.choice(problematic_points))
+def fix_points (unique_points, conflicts):
+    maxattempts = 1
+    #extraPoint = random.choice(conflicts)# בחירת נקודה אקראית עם מעט קונפליקטים
+    #unique_points.add(extraPoint)
+    while maxattempts <= 10:
+        #conPoint = Finding_the_points_of_conflict(extraPoint, unique_points) # הגרלת נקודה אחת שנמצאת בקונפליקט עם extraPoint
+        #if conPoint == None:  #אין עוד קונפליקטים בגרף
+           # break
+        extraPoint = conflicts[0] #random.choice(conflicts)  # בחירת נקודה אקראית עם מעט קונפליקטים
+        conPoint = Finding_the_points_of_conflict(extraPoint, unique_points)  # הגרלת נקודה אחת שנמצאת בקונפליקט עם extraPoint
+        unique_points.add(extraPoint)
+        if conPoint == None:  #אין עוד קונפליקטים בגרף
+            break
+        unique_points.remove(conPoint)
+        matrix=create_matrix_from_points(unique_points) # אתחול מטריצה
+        matrix = count_collinear_points(matrix, unique_points, n)
+        conflicts = find_min_values_positions(matrix, int(0.4*n))
+        if matrix[conflicts[0]] == 0: #ישנה נקודה שאינה נמצאת בקונפליקטים
+            unique_points.add(conflicts[0])
+            break
+        #if len(conflicts) == 0:
+           # break
+        #extraPoint = random.choice(conflicts)
+        #unique_points.add(extraPoint)
+        maxattempts += 1
+    print(maxattempts)
 
 # יצירת הנקודות
-n = 10
+n = 60
 max_points = 2 * n
 unique_points = generate_unique_points(n, max_points)
 print(unique_points)
-matrix = np.zeros((n, n)) #אתחול מטריצה
+#matrix = np.zeros((n, n)) #אתחול מטריצה
+matrix = create_matrix_from_points(unique_points)
 matrix = count_collinear_points(matrix, unique_points, n)
-conflicts = find_min_values_positions(matrix, int(0.2*n))
-print(conflicts)
-for i in range (len(conflicts)):
-    unique_points.add(conflicts[i])
-print("help")
-#min_conflicts(unique_points,n)
-#fix_points(list(unique_points))
-# הצגה גרפית של הנקודות
+conflicts = find_min_values_positions(matrix, int(0.4*n))
+#print(conflicts)
+#print(matrix)
+print(len(unique_points))
+fix_points(unique_points, conflicts)
+#print(matrix)
+# הצגה גרפית של הנק;ודות
 x_values = [point[0] for point in unique_points]
 y_values = [point[1] for point in unique_points]
 
