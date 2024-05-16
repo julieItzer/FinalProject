@@ -1,11 +1,10 @@
 import random
 
 def is_collinear(p1, p2, p3):
-    # חישוב המכפלה סקלרית
     return (p1[0] - p2[0]) * (p3[1] - p2[1]) == (p3[0] - p2[0]) * (p1[1] - p2[1])
 
 def is_valid(board, row, col):
-    # בדיקה אם הנקודה שאנו רוצים לשים אינה יוצרת שלוש נקודות על אותו קו עם נקודות קיימות
+    # Checking if the point we want to put does not create three points on the same line with existing pointsת
     n = len(board)
     points = [(i, j) for i in range(row) for j in range(n) if board[i][j] == 1]
     for p1 in points:
@@ -17,30 +16,30 @@ def is_valid(board, row, col):
 def place_points(board, row):
     n = len(board)
     if row == n:
-        return True  # הגענו לסוף הלוח
+        return True  # We have reached the end of the board
 
-    # ניסיון למצוא שתי עמודות חוקיות בשורה זו
+    # Attempt to find two valid columns in this row
     columns = list(range(n))
-    random.shuffle(columns)  # ערבוב רנדומלי של העמודות
+    random.shuffle(columns)  # Random shuffle of the column
     for i in columns:
         for j in columns:
             if i != j and is_valid(board, row, i) and is_valid(board, row, j):
                 board[row][i] = 1
                 board[row][j] = 1
                 if place_points(board, row + 1):
-                    return True  # מצאנו פתרון חוקי, נמשיך רקורסיבית לשורה הבאה
+                    return True  # We have found a valid solution, we will continue recursively to the next line
                 board[row][i] = 0
-                board[row][j] = 0  # ביטול התצורה אם לא מצאנו פתרון חוקי
-    return False  # לא מצאנו פתרון חוקי עבור שורה זו
+                board[row][j] = 0  #Canceling the configuration if we have not found a valid solution
+    return False  # We did not find a valid solution for this line
 
 def solve_no_three_in_line(n):
-    board = [[0] * n for _ in range(n)]  # יצירת לוח n x n
+    board = [[0] * n for _ in range(n)]  # Creating an n x n board
     if place_points(board, 0):
         return board
     else:
         return None
 
-# הדפסת הפתרון
+# Print the solution
 n = 9
 solution = solve_no_three_in_line(n)
 if solution:
@@ -60,20 +59,20 @@ def plot_board(board):
     plt.xlim(-0.5, n - 0.5)
     plt.ylim(-0.5, n - 0.5)
 
-    # מטריצה של הנקודות
+    # matrix of the points
     points = [(i, j) for i in range(n) for j in range(n) if board[i][j] == 1]
     for point in points:
-        plt.scatter(point[1], n - 1 - point[0], s=200) # ציור הנקודה על הלוח
+        plt.scatter(point[1], n - 1 - point[0], s=200) # Drawing the point on the board
 
-    plt.gca().invert_yaxis() # הפיכת מערך ה-y כדי ש-0 יהיה בחלק העליון של הגרף
+    plt.gca().invert_yaxis() # Flipping the y array so that 0 is at the top of the graph
     plt.show()
 
     return points
 
-# השארת הפונקציות is_collinear, is_valid, place_points, solve_no_three_in_line כפי שהן
+# leaving the functions is collinear, is_valid, place points, solve_no_three_in_line as they are
 # ...
 
-# הפעלת הפונקציה לפתרון והדפסת הלוח
+# Activating the function to solve and print the board
 solution = solve_no_three_in_line(n)
 if solution:
     points = plot_board(solution)
