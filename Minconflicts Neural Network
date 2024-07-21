@@ -1,0 +1,337 @@
+import os
+import random
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import itertools
+import random
+import matplotlib.pyplot as plt
+import numpy as np
+
+#from minconflicts import create_matrix_from_points, count_collinear_points, find_zeros, fix_points
+
+
+# Class defining the neural network architecture
+class NeuralNetwork(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(NeuralNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)  # Flatten the input
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+
+# Class to handle the environment
+class NoThreeInALineEnv:
+    def __init__(self, grid_size):
+        self.grid_size = grid_size
+        self.reset()
+
+    def reset(self):
+        self.board = np.zeros((self.grid_size, self.grid_size))
+        self.legal = np.ones((self.grid_size, self.grid_size))
+        self.points = []
+        self.has_legal_move = True
+
+    def step(self, action):
+        if not self.has_legal_move:
+            return
+
+        # Update board and legal
+        row, col = action
+        self.board[row][col] = 1
+        self.legal[row][col] = 0
+        self.points.append((row, col))
+
+        for point in self.points:
+            p_row, p_col = point
+            if p_row != row or p_col != col:
+                d_row, d_col = row - p_row, col - p_col
+                D = np.gcd(d_row, d_col)
+                if D == 0:
+                    print(p_row, p_col, row, col)
+                d_row = d_row // D
+                d_col = d_col // D
+                i = 0
+                while 0 <= row + i * d_row < self.grid_size and 0 <= col + i * d_col < self.grid_size:
+                    self.legal[row + i * d_row][col + i * d_col] = 0
+                    i += 1
+                i = -1
+                while 0 <= row + i * d_row < self.grid_size and 0 <= col + i * d_col < self.grid_size:
+                    self.legal[row + i * d_row][col + i * d_col] = 0
+                    i -= 1
+        if not np.any(self.legal):
+            self.has_legal_move = False
+
+    def encode(self):
+        return np.concatenate((self.board.flatten(), self.legal.flatten()))
+
+
+# Class to handle the player
+class NoThreeInALinePlayer:
+    def __init__(self, grid_size, model):
+        self.grid_size = grid_size
+        self.model = model
+
+    def choose_move(self, env):
+        state = torch.tensor(env.encode(), dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            q_values = self.model(state)
+        flat_legal = env.legal.flatten()
+        legal_q_values = q_values[0][flat_legal == 1]
+        legal_indices = np.flatnonzero(flat_legal == 1)
+        action_index = legal_indices[torch.argmax(legal_q_values).item()]
+        row, col = divmod(action_index, self.grid_size)
+        return row, col
+
+
+# Class to handle the training process
+class Coach:
+    def __init__(self, model, grid_size, epsilon):
+        self.model = model
+        self.grid_size = grid_size
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        self.criterion = nn.MSELoss()
+        self.epsilon = epsilon
+        self.max_points_set = set()  # Initialize the max points set
+
+    def train(self, num_episodes=100):
+        player = NoThreeInALinePlayer(self.grid_size, self.model)
+        history = []
+        max_points_per_run = 0  # Variable to keep track of the maximum points in a run
+
+        for episode in range(num_episodes):
+            if episode % 100 == 0:
+                self.epsilon = self.epsilon * 0.97
+            env = NoThreeInALineEnv(self.grid_size)
+            num_points = 0
+            episode_history = []
+
+            while env.has_legal_move:
+                if random.random() < self.epsilon and num_points < self.grid_size:
+                    indices = np.argwhere(env.legal == 1)
+                    row, col = indices[np.random.choice(len(indices))]
+                else:
+                    row, col = player.choose_move(env)
+
+                # The reward for each successful step is 1.
+                action = self.grid_size * row + col
+                episode_history.append((env.encode(), action, 1))
+                env.step((row, col))
+                num_points += 1
+
+                # Check if the number of points is 1.7 times the grid size
+                #target_points = int(1.7 * self.grid_size)
+                #if num_points == target_points:
+                    #print(f"Points selected up to 1.7 * {self.grid_size}: {env.points}")
+
+                if not env.has_legal_move:
+                    break
+
+            # Update max_points_per_run and max_points_set if the current run has more points
+            if num_points > max_points_per_run:
+                max_points_per_run = num_points
+                self.max_points_set = set(env.points)
+
+            history = episode_history
+
+            # Update model based on episode history
+            self.update_model(history)
+
+            print(f"Episode [{episode+1}/{num_episodes}], Points: {num_points}")
+
+        # Print the final set of points with the maximum points
+        print(f"Set of points from the run with maximum points: {self.max_points_set}")
+    def compute_discounted_reward(self, step, total_steps, gamma):
+        # Compute the discounted reward
+        if gamma == 1:
+            return total_steps - step
+        return (1 - gamma ** (total_steps - step)) / (1 - gamma)
+
+    def update_model(self, history, gamma=0.98):
+        total_steps = len(history)
+
+        for step, (state, action, reward) in enumerate(history):
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+
+            # Forward pass to get Q-values for all actions
+            q_values = self.model(state_tensor)
+            q_value = q_values[0, action]
+
+            # Compute the target discounted reward
+            target_reward = self.compute_discounted_reward(step, total_steps, gamma)
+            target_tensor = torch.tensor([target_reward], dtype=torch.float32)
+
+            # Compute the loss between the predicted Q-value and the target reward
+            loss = self.criterion(q_value, target_tensor)
+
+            # Backpropagate the loss and update the network weights
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+def is_collinear(p1, p2, p3):
+    # Calculating a scalar product
+    return (p1[0] - p2[0]) * (p3[1] - p2[1]) == (p3[0] - p2[0]) * (p1[1] - p2[1])
+
+def generate_unique_points(n, max_points):
+    #A function randomizes points and adds to the list all points that meet the conditions of the problem
+    chosen_points = set()
+    remaining_points = [(x, y) for x in range(n) for y in range(n)]  # Creating a list of all possible points
+    x_counts = {i: 0 for i in range(n)}  # Tracking the number of points in each row
+    y_counts = {i: 0 for i in range(n)}  # Tracking the number of points in each column
+
+    # Choosing a point at random and checking that it does not create collinearity with existing points
+    while len(chosen_points) < max_points and remaining_points:
+        k = random.randint(0, len(remaining_points)-1)
+        new_point = remaining_points[k]
+        remaining_points[k] = remaining_points[-1]
+        remaining_points.pop()
+        if x_counts[new_point[0]] >= 2 or y_counts[new_point[1]] >= 2:  # There are already two points in the row or column
+            continue
+        if not any(is_collinear(p1, p2, new_point) for p1, p2 in itertools.combinations(chosen_points, 2)):
+            chosen_points.add(new_point)
+            x_counts[new_point[0]] += 1
+            y_counts[new_point[1]] += 1
+
+    # Returning all selected points
+    return chosen_points
+
+def count_collinear_points(matrix, unique_points, n):
+    # For each pair of points, check which other points form a collinear line
+    for i in range(n):
+        for j in range(n):
+            for p1, p2 in itertools.combinations(unique_points, 2):
+                if (p1 == (i,j) or p2 == (i,j)):
+                    continue
+                if (p1[0] == p2[0] and p2[0] == i) or (p1[1] == p2[1] and p2[1] == j):
+                    matrix[i, j] += 1
+                else:
+                    if is_collinear(p1, p2, (i, j)):
+                        matrix[i, j] += 1
+    return matrix
+
+def create_matrix_from_points(points, grid_size):
+    # Creating a matrix of zeros with the requested size
+    matrix = np.zeros((grid_size, grid_size))
+
+    # Updating the matrix: for each point, put -1 in the appropriate place
+    for point in points:
+        # x, y = point
+        matrix[point] = -1
+
+    return matrix
+
+def find_zeros(matrix):
+    positions = []  # A list to collect the positions of the zeros and ones
+    for i, row in enumerate(matrix):  # Loop over each row and row index
+        for j, value in enumerate(row):  # Loop over each column index value in a row
+            if value == 1 or value == 0:
+                positions.append((i, j))  # Adding the position of the zero and one to the list
+    positions_sorted = sorted(positions, key=lambda x: (x[0], x[1]))
+    return positions_sorted
+
+def find_min_values_positions(matrix, num):
+    # Creating a list of all the points and their values, except those with a value of 0
+    points_values = [(i, j, matrix[i][j]) for i in range(len(matrix)) for j in range(len(matrix[0]))
+                     if matrix[i][j] >= 0]
+
+    # Sort list by value at each point
+    points_values.sort(key=lambda x: x[2])
+
+    # Finding the minimum num values
+    min_positions = [(i, j) for i, j, value in points_values[:num]]
+
+    return min_positions
+
+# The function will return a point that is in conflict with the point the function receives
+def Finding_the_points_of_conflict(conPoints, points):
+    for p1, p2 in itertools.combinations(points, 2):
+        if is_collinear(p1, p2, conPoints):
+            l = [p1, p2]
+            return random.choice(l)
+
+def fix_points (unique_points, conflicts, grid_size):
+    #Implementation of minconflicts algorithm
+    maxattempts = 1
+    while maxattempts <= 10:
+
+        if len(conflicts) == 0:
+            break  # Exit the loop if there are no conflicts
+
+        if conflicts[0] == 0 or len(unique_points) == len(conflicts) == 1:
+            extraPoint = conflicts[0] #Select a point with 0 conflicts
+        else:
+            pos = random.randint(0, len(conflicts) - 1)
+            extraPoint = conflicts[pos]  # Random point selection with few conflicts
+        conPoint = Finding_the_points_of_conflict(extraPoint, unique_points)  # One point draw that is in conflict with extraPoint
+        unique_points.add(extraPoint)
+        if conPoint == None:  #There are no more conflicts in the graph
+            break
+        unique_points.remove(conPoint)
+        matrix = create_matrix_from_points(unique_points, grid_size) # initialization matrix
+        matrix = count_collinear_points(matrix, unique_points, grid_size)
+        conflicts = find_zeros(matrix)
+        if len(conflicts) == 0:
+            break  # Exit the loop if there are no conflicts
+        if matrix[conflicts[0]] == 0: #There is a point that is not in conflicts
+            unique_points.add(conflicts[0])
+            break
+        maxattempts += 1
+    print(maxattempts)
+
+def main():
+    # Configuration
+    grid_size = 20
+    input_size = 2 * grid_size * grid_size  # Board and legal flattened for a 5x5 grid
+    hidden_size = 128
+    output_size = grid_size * grid_size  # One output for each position on the grid
+    epsilon = 0.1
+    num_episodes = 1000
+    model_path = "no_three_in_a_line_model20.pth"
+
+    # Initialize the model
+    model = NeuralNetwork(input_size, hidden_size, output_size)
+
+    # Load the model if it exists
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path))
+        print("Model loaded from", model_path)
+    else:
+        print("Training a new model...")
+
+    # Initialize the coach
+    coach = Coach(model, grid_size, epsilon)
+
+    # Train the model
+    coach.train(num_episodes)
+
+    # Save the trained model
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved to {model_path}")
+
+    matrix = create_matrix_from_points(coach.max_points_set, grid_size)
+    matrix = count_collinear_points(matrix, coach.max_points_set, grid_size)
+    conflicts = find_zeros(matrix)
+    print(conflicts)
+    print(len(coach.max_points_set))
+    temp = 0
+    while (temp < 150 and len(coach.max_points_set) / grid_size <= 1.9):
+        temp += 1
+        if len(conflicts) == 0:
+            print(coach.max_points_set)
+            break  # Exit the loop if there are no conflicts
+        fix_points(coach.max_points_set, conflicts, grid_size)
+        matrix = create_matrix_from_points(coach.max_points_set, grid_size)
+        matrix = count_collinear_points(matrix, coach.max_points_set, grid_size)
+        conflicts = find_zeros(matrix)
+        print(len(coach.max_points_set))
+
+
+if __name__ == "__main__":
+    main()
