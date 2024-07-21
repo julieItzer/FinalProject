@@ -1,0 +1,188 @@
+import os
+import random
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+# Class defining the neural network architecture
+class NeuralNetwork(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(NeuralNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)  # Flatten the input
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+
+# Class to handle the environment
+class NoThreeInALineEnv:
+    def __init__(self, grid_size):
+        self.grid_size = grid_size
+        self.reset()
+
+    def reset(self):
+        self.board = np.zeros((self.grid_size, self.grid_size))
+        self.legal = np.ones((self.grid_size, self.grid_size))
+        self.points = []
+        self.has_legal_move = True
+
+    def step(self, action):
+        if not self.has_legal_move:
+            return
+
+        # Update board and legal
+        row, col = action
+        self.board[row][col] = 1
+        self.legal[row][col] = 0
+        self.points.append((row, col))
+
+        for point in self.points:
+            p_row, p_col = point
+            if p_row != row or p_col != col:
+                d_row, d_col = row - p_row, col - p_col
+                D = np.gcd(d_row, d_col)
+                if D == 0:
+                    print(p_row, p_col, row, col)
+                d_row = d_row // D
+                d_col = d_col // D
+                i = 0
+                while 0 <= row + i * d_row < self.grid_size and 0 <= col + i * d_col < self.grid_size:
+                    self.legal[row + i * d_row][col + i * d_col] = 0
+                    i += 1
+                i = -1
+                while 0 <= row + i * d_row < self.grid_size and 0 <= col + i * d_col < self.grid_size:
+                    self.legal[row + i * d_row][col + i * d_col] = 0
+                    i -= 1
+        if not np.any(self.legal):
+            self.has_legal_move = False
+
+    def encode(self):
+        return np.concatenate((self.board.flatten(), self.legal.flatten()))
+
+
+# Class to handle the player
+class NoThreeInALinePlayer:
+    def __init__(self, grid_size, model):
+        self.grid_size = grid_size
+        self.model = model
+
+    def choose_move(self, env):
+        state = torch.tensor(env.encode(), dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            q_values = self.model(state)
+        flat_legal = env.legal.flatten()
+        legal_q_values = q_values[0][flat_legal == 1]
+        legal_indices = np.flatnonzero(flat_legal == 1)
+        action_index = legal_indices[torch.argmax(legal_q_values).item()]
+        row, col = divmod(action_index, self.grid_size)
+        return row, col
+
+
+# Class to handle the training process
+class Coach:
+    def __init__(self, model, grid_size, epsilon):
+        self.model = model
+        self.grid_size = grid_size
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        self.criterion = nn.MSELoss()
+        self.epsilon = epsilon
+
+    def train(self, num_episodes=100):
+        player = NoThreeInALinePlayer(self.grid_size, self.model)
+        history = []
+
+        for episode in range(num_episodes):
+            if episode % 100 == 0:
+                self.epsilon = self.epsilon * 0.97
+            env = NoThreeInALineEnv(self.grid_size)
+            num_points = 0
+            episode_history = []
+
+            while env.has_legal_move:
+                if random.random() < self.epsilon and num_points < self.grid_size:
+                    indices = np.argwhere(env.legal == 1)
+                    row, col = indices[np.random.choice(len(indices))]
+                else:
+                    row, col = player.choose_move(env)
+
+                # The reward for each successful step is 1.
+                action = self.grid_size * row + col
+                episode_history.append((env.encode(), action, 1))
+                env.step((row, col))
+                num_points += 1
+                if not env.has_legal_move:
+                    break
+
+            history = episode_history
+
+            # Update model based on episode history
+            self.update_model(history)
+
+            print(f"Episode [{episode+1}/{num_episodes}], Points: {num_points}")
+
+    def compute_discounted_reward(self, step, total_steps, gamma):
+        # Compute the discounted reward
+        if gamma == 1:
+            return total_steps - step
+        return (1 - gamma ** (total_steps - step)) / (1 - gamma)
+
+    def update_model(self, history, gamma=0.9):
+        total_steps = len(history)
+
+        for step, (state, action, reward) in enumerate(history):
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+
+            # Forward pass to get Q-values for all actions
+            q_values = self.model(state_tensor)
+            q_value = q_values[0, action]
+
+            # Compute the target discounted reward
+            target_reward = self.compute_discounted_reward(step, total_steps, gamma)
+            target_tensor = torch.tensor([target_reward], dtype=torch.float32)
+
+            # Compute the loss between the predicted Q-value and the target reward
+            loss = self.criterion(q_value, target_tensor)
+
+            # Backpropagate the loss and update the network weights
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+def main():
+    # Configuration
+    grid_size = 40
+    input_size = 2 * grid_size * grid_size  # Board and legal flattened for a 5x5 grid
+    hidden_size = 128
+    output_size = grid_size * grid_size  # One output for each position on the grid
+    epsilon = 0.1
+    num_episodes = 10000
+    model_path = "no_three_in_a_line_model40.pth"
+
+    # Initialize the model
+    model = NeuralNetwork(input_size, hidden_size, output_size)
+
+    # Load the model if it exists
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path))
+        print("Model loaded from", model_path)
+    else:
+        print("Training a new model...")
+
+    # Initialize the coach
+    coach = Coach(model, grid_size, epsilon)
+
+    # Train the model
+    coach.train(num_episodes)
+
+    # Save the trained model
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved to {model_path}")
+
+
+if __name__ == "__main__":
+    main()
